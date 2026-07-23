@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import streamlit as st
 from bga_logic import BGAInput, analyse_bga, glucose_to_mmol_l, glucose_to_mg_dl
+from dyshemoglobin import assess_dyshemoglobins, dyshemoglobin_adjusted_cao2
 from respiratory_support import respiratory_support_recommendation
 
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
-st.caption("Version 9 · Empfehlungen zu O₂, NIV und invasiver Beatmung")
+st.caption("Version 10 · CO-Hb und Met-Hb ergänzt")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -19,6 +20,7 @@ with st.expander("Wichtige Hinweise"):
 - Der Säure–Base-Kern folgt dem 5-Schritte-Schema nach Schiffler et al. (2025).
 - CaO₂ und P/F-Quotient sind ergänzende Standardberechnungen; der Artikel behandelt die Oxygenierung nicht systematisch.
 - Kompensationsformeln und Delta-Ratio sind Näherungen.
+- Bei erhöhtem CO-Hb oder Met-Hb können Pulsoxymetrie, berechnete SaO₂ und eine Standard-CaO₂-Berechnung irreführend sein.
         """
     )
 
@@ -45,6 +47,29 @@ with st.form("bga_form"):
     fio2 = c2.number_input("FiO₂ (%)", 21.0, 100.0, 21.0, 1.0)
     sao2 = c3.number_input("SaO₂ (%)", 0.0, 100.0, 97.0, 0.1)
     hb = c4.number_input("Hb (g/dl)", 1.0, 25.0, 14.0, 0.1)
+
+    d1, d2, d3 = st.columns(3)
+    co_hb = d1.number_input(
+        "CO-Hb (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=1.0,
+        step=0.1,
+        help="Referenzbereich laut Artikel: 0,5–1,5 %.",
+    )
+    met_hb = d2.number_input(
+        "Met-Hb (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=0.5,
+        step=0.1,
+        help="Referenzbereich laut Artikel: 0–1,5 %.",
+    )
+    smoking_status = d3.selectbox(
+        "Raucherstatus",
+        ["unbekannt", "Nichtraucher", "Raucher"],
+        help="Der Raucherstatus beeinflusst die Einordnung eines erhöhten CO-Hb.",
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     lactate = c1.number_input("Laktat (mmol/l)", 0.0, 30.0, 1.0, 0.1)
@@ -146,6 +171,17 @@ if submitted:
         urine_ketones=urine_ketones,
     )
     result = analyse_bga(data)
+    dys = assess_dyshemoglobins(co_hb, met_hb, smoking_status)
+    cao2_dys_adjusted = None
+    if sample_type == "arteriell":
+        cao2_dys_adjusted = dyshemoglobin_adjusted_cao2(
+            hb,
+            sao2,
+            po2,
+            co_hb,
+            met_hb,
+        )
+
     support = respiratory_support_recommendation(
         data,
         respiratory_rate=int(respiratory_rate),
@@ -153,6 +189,9 @@ if submitted:
         clinical_context=respiratory_context,
         red_flags=respiratory_red_flags,
     )
+    if dys["oxygen_note"]:
+        support["oxygen"] = f'{dys["oxygen_note"]} {support["oxygen"]}'
+
     if result["errors"]:
         for error in result["errors"]:
             st.error(error)
@@ -224,17 +263,41 @@ if submitted:
         elif sample_type == "arteriell":
             st.info("Für die Schweregradeinordnung wird ein arterieller pO₂ benötigt.")
 
-        c_oxy1, c_oxy2 = st.columns(2)
+        c_oxy1, c_oxy2, c_oxy3 = st.columns(3)
         c_oxy1.metric(
             "P/F-Quotient",
             f'{result["pf_ratio"]:.0f} mmHg' if result["pf_ratio"] is not None else "nicht berechenbar",
         )
         if result["cao2"] is not None:
-            c_oxy2.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
+            c_oxy2.metric("CaO₂ Standard", f'{result["cao2"]:.1f} ml O₂/dl')
             c_oxy2.caption("CaO₂ = 1,34 × Hb × (SaO₂/100) + 0,003 × pO₂")
         else:
-            c_oxy2.metric("CaO₂", "nicht berechenbar")
+            c_oxy2.metric("CaO₂ Standard", "nicht berechenbar")
             c_oxy2.caption("Benötigt arterielle Probe, pO₂, Hb und SaO₂.")
+
+        if cao2_dys_adjusted is not None:
+            c_oxy3.metric("CaO₂ geschätzt, dysHb-adjustiert", f"{cao2_dys_adjusted:.1f} ml O₂/dl")
+            c_oxy3.caption("Schätzung bei funktioneller SaO₂; gemessene O₂Hb-Fraktion ist vorzuziehen.")
+        else:
+            c_oxy3.metric("CaO₂ dysHb-adjustiert", "nicht berechenbar")
+
+        st.subheader("Dys-Hämoglobine")
+        d1, d2 = st.columns(2)
+        d1.metric("CO-Hb", f"{co_hb:.1f} %")
+        d2.metric("Met-Hb", f"{met_hb:.1f} %")
+        if dys["co_rank"] == "normal":
+            st.success(dys["co_summary"])
+        else:
+            st.warning(dys["co_summary"])
+        if dys["met_rank"] == "normal":
+            st.success(dys["met_summary"])
+        else:
+            st.warning(dys["met_summary"])
+        if dys["saturation_warning"]:
+            st.warning(dys["saturation_note"])
+            st.info(dys["cao2_note"])
+        else:
+            st.info(dys["saturation_note"])
 
     with tab4:
         comp = result["compensation"]
@@ -251,6 +314,9 @@ if submitted:
             f'Kompensationsbeurteilung: {comp["mode"]}.',
             *comp["details"], *comp["flags"],
             f'Anionenlücke {result["anion_gap"]:.1f} mmol/l.',
+            dys["co_summary"],
+            dys["met_summary"],
+            dys["saturation_note"],
         ]
         lines.extend([
             f'Sauerstoffempfehlung: {support["oxygen"]}',
@@ -268,7 +334,9 @@ if submitted:
             lines.append(result["oxygenation_assessment"]["summary"])
             lines.extend(result["oxygenation_assessment"]["notes"])
         if result["cao2"] is not None:
-            lines.append(f'CaO₂ {result["cao2"]:.1f} ml O₂/dl.')
+            lines.append(f'CaO₂ Standard {result["cao2"]:.1f} ml O₂/dl.')
+        if cao2_dys_adjusted is not None:
+            lines.append(f'CaO₂ dysHb-adjustiert geschätzt {cao2_dys_adjusted:.1f} ml O₂/dl.')
         if result["pf_ratio"] is not None:
             lines.append(f'P/F-Quotient {result["pf_ratio"]:.0f} mmHg.')
         lines.append(
@@ -282,7 +350,7 @@ if submitted:
         for warning in result["warnings"]:
             lines.append("Hinweis: " + warning)
         report = " ".join(lines)
-        st.text_area("Kopierbarer Befundentwurf", report, height=220)
+        st.text_area("Kopierbarer Befundentwurf", report, height=260)
         st.download_button(
             "Ergebnis als JSON herunterladen",
             json.dumps(
@@ -293,8 +361,13 @@ if submitted:
                         "glucose_unit": glucose_unit,
                         "glucose_mmol_l": glucose_mmol,
                         "glucose_mg_dl": glucose_mg_dl,
+                        "co_hb_percent": co_hb,
+                        "met_hb_percent": met_hb,
+                        "smoking_status": smoking_status,
+                        "cao2_dyshemoglobin_adjusted_estimate": cao2_dys_adjusted,
                     },
                     "result": result,
+                    "dyshemoglobin_assessment": dys,
                     "respiratory_support_recommendation": support,
                 },
                 ensure_ascii=False,
@@ -307,4 +380,4 @@ if submitted:
         st.warning(warning)
 
 st.divider()
-st.caption("Literaturgrundlage: Schiffler C et al. Notaufnahme up2date 2025; 7:229–237. DOI 10.1055/a-2517-5186. Ärztliche Plausibilitätskontrolle erforderlich.")
+st.caption("Literaturgrundlage: Schiffler C et al. Notaufnahme up2date 2025; 7:229–237 und Venturini S et al. Notaufnahme up2date 2026; 8:293–309. Ärztliche Plausibilitätskontrolle erforderlich.")
