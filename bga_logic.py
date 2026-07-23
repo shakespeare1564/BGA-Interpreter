@@ -198,6 +198,97 @@ def pf_ratio(po2: float, fio2_percent: float) -> float:
     return po2 / (fio2_percent / 100.0)
 
 
+def classify_room_air_pao2(po2: float) -> dict[str, str]:
+    """Orientierende Schweregradeinteilung des arteriellen PaO₂ unter Raumluft."""
+    if po2 >= 80:
+        return {"level": "keine manifeste Hypoxämie", "short": "nicht hypoxämisch", "rank": "normal"}
+    if po2 >= 60:
+        return {"level": "leichtgradige arterielle Hypoxämie", "short": "leichtgradig", "rank": "mild"}
+    if po2 >= 40:
+        return {"level": "mittelgradige arterielle Hypoxämie", "short": "mittelgradig", "rank": "moderate"}
+    return {"level": "schwergradige arterielle Hypoxämie", "short": "schwergradig", "rank": "severe"}
+
+
+def classify_pf_oxygenation(pf: float) -> dict[str, str]:
+    """P/F-basierte Schweregradeinteilung als reine Oxygenierungsorientierung."""
+    if pf > 300:
+        return {"level": "keine relevante P/F-basierte Oxygenierungsstörung", "short": "P/F >300", "rank": "normal"}
+    if pf > 200:
+        return {"level": "leichtgradige P/F-basierte Oxygenierungsstörung", "short": "leichtgradig", "rank": "mild"}
+    if pf > 100:
+        return {"level": "mittelgradige P/F-basierte Oxygenierungsstörung", "short": "mittelgradig", "rank": "moderate"}
+    return {"level": "schwergradige P/F-basierte Oxygenierungsstörung", "short": "schwergradig", "rank": "severe"}
+
+
+def assess_oxygenation(
+    sample_type: str,
+    po2: Optional[float],
+    fio2_percent: Optional[float],
+) -> Optional[dict[str, Any]]:
+    """Beurteilt die arterielle Oxygenierung unter Berücksichtigung der FiO₂."""
+    if po2 is None or not sample_type.lower().startswith("arter"):
+        return None
+
+    if fio2_percent is None:
+        grade = classify_room_air_pao2(po2)
+        if po2 < 80:
+            summary = (
+                f"PaO₂ {po2:.0f} mmHg: arterielle Hypoxämie. Falls die Probe unter Raumluft "
+                f"abgenommen wurde, entspricht dies einer {grade['level']}."
+            )
+        else:
+            summary = (
+                f"PaO₂ {po2:.0f} mmHg: keine manifeste Hypoxämie nach der "
+                f"orientierenden Raumluft-Einteilung."
+            )
+        return {
+            "summary": summary,
+            "severity": grade["level"],
+            "severity_short": grade["short"],
+            "rank": grade["rank"],
+            "basis": "PaO₂; Raumluft nicht gesichert",
+            "notes": [
+                "FiO₂ fehlt: Das Ausmaß der Oxygenierungsstörung kann nicht sicher beurteilt werden.",
+                "Alter, Höhe über dem Meeresspiegel und klinischer Kontext sind zusätzlich zu berücksichtigen.",
+            ],
+        }
+
+    if fio2_percent <= 21.5:
+        grade = classify_room_air_pao2(po2)
+        summary = f"{grade['level'][0].upper() + grade['level'][1:]} unter Raumluft (PaO₂ {po2:.0f} mmHg)."
+        notes = [
+            "Die PaO₂-Grenzen sind eine orientierende BGA-Einteilung; Alter, Höhe und klinischer Verlauf bleiben relevant."
+        ]
+        if po2 < 60:
+            notes.insert(0, "PaO₂ <60 mmHg: klinisch relevante arterielle Hypoxämie.")
+        return {
+            "summary": summary,
+            "severity": grade["level"],
+            "severity_short": grade["short"],
+            "rank": grade["rank"],
+            "basis": "arterieller PaO₂ unter Raumluft",
+            "notes": notes,
+        }
+
+    pf = pf_ratio(po2, fio2_percent)
+    grade = classify_pf_oxygenation(pf)
+    summary = (
+        f"{grade['level'][0].upper() + grade['level'][1:]} bei PaO₂ {po2:.0f} mmHg, "
+        f"FiO₂ {fio2_percent:.0f}% und P/F {pf:.0f} mmHg."
+    )
+    return {
+        "summary": summary,
+        "severity": grade["level"],
+        "severity_short": grade["short"],
+        "rank": grade["rank"],
+        "basis": "PaO₂/FiO₂",
+        "notes": [
+            "Unter Sauerstoffzufuhr darf der absolute PaO₂ nicht mit Raumluft-Grenzen graduiert werden; entscheidender ist der P/F-Quotient.",
+            "Die P/F-Bänder allein stellen keine ARDS-Diagnose; zusätzliche klinische, bildgebende und respiratorische Kriterien sind erforderlich.",
+        ],
+    }
+
+
 def validate_input(data: BGAInput) -> list[str]:
     checks = [
         (6.5 <= data.ph <= 8.0, "pH außerhalb 6,5–8,0."),
@@ -241,6 +332,7 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
         "urine_anion_gap": None,
         "cao2": None,
         "pf_ratio": None,
+        "oxygenation_assessment": None,
         "warnings": [],
     }
 
@@ -285,6 +377,9 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
         result["cao2"] = arterial_oxygen_content(data.hb, data.sao2_percent, data.po2)
     if arterial and data.po2 is not None and data.fio2_percent is not None:
         result["pf_ratio"] = pf_ratio(data.po2, data.fio2_percent)
+    result["oxygenation_assessment"] = assess_oxygenation(
+        data.sample_type, data.po2, data.fio2_percent
+    )
     if not arterial and data.po2 is not None:
         result["warnings"].append("Nichtarterielle Probe: pO₂ nicht zur arteriellen Oxygenierung verwenden.")
 
