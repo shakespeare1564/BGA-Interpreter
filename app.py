@@ -7,6 +7,7 @@ from bga_logic import BGAInput, analyse_bga
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
+st.caption("Version 3 · alle Zusatzfelder direkt editierbar")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -38,7 +39,7 @@ with st.form("bga_form"):
     st.caption("Alle Felder sind direkt editierbar. Die Kontrollkästchen bestimmen nur, ob der jeweilige Wert ausgewertet wird.")
     c1, c2, c3, c4 = st.columns(4)
     po2_known = c1.checkbox("pO₂ vorhanden")
-    po2 = c1.number_input("pO₂ (mmHg)", 10.0, 700.0, 90.0, 1.0, disabled=not po2_known)
+    po2 = c1.number_input("pO₂ (mmHg)", 10.0, 700.0, 90.0, 1.0)
     fio2_known = c2.checkbox("FiO₂ bekannt")
     fio2 = c2.number_input("FiO₂ (%)", 21.0, 100.0, 21.0, 1.0)
     sao2_known = c3.checkbox("SaO₂ vorhanden")
