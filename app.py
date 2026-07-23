@@ -7,7 +7,7 @@ from bga_logic import BGAInput, analyse_bga
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
-st.caption("Version 4 · mit Schweregradeinordnung der Oxygenierungsstörung")
+st.caption("Version 5 · Zusatzparameter ohne Kontrollkästchen")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -36,38 +36,117 @@ with st.form("bga_form"):
     albumin = c4.number_input("Albumin (g/l)", 5.0, 60.0, 40.0, 1.0)
 
     st.subheader("2 · Oxygenierung und Zusatzparameter")
-    st.caption("Alle Felder sind direkt editierbar. Die Kontrollkästchen bestimmen nur, ob der jeweilige Wert ausgewertet wird.")
+    st.caption("Nicht vorliegende Zusatzwerte einfach leer lassen.")
     c1, c2, c3, c4 = st.columns(4)
-    po2_known = c1.checkbox("pO₂ vorhanden")
-    po2 = c1.number_input("pO₂ (mmHg)", 10.0, 700.0, 90.0, 1.0)
-    fio2_known = c2.checkbox("FiO₂ bekannt")
-    fio2 = c2.number_input("FiO₂ (%)", 21.0, 100.0, 21.0, 1.0)
-    sao2_known = c3.checkbox("SaO₂ vorhanden")
-    sao2 = c3.number_input("SaO₂ (%)", 0.0, 100.0, 97.0, 0.1)
-    hb_known = c4.checkbox("Hb vorhanden")
-    hb = c4.number_input("Hb (g/dl)", 1.0, 25.0, 14.0, 0.1)
+    po2 = c1.number_input(
+        "pO₂ (mmHg)",
+        min_value=10.0,
+        max_value=700.0,
+        value=None,
+        step=1.0,
+        placeholder="optional",
+    )
+    fio2 = c2.number_input(
+        "FiO₂ (%)",
+        min_value=21.0,
+        max_value=100.0,
+        value=None,
+        step=1.0,
+        placeholder="z. B. 21",
+    )
+    sao2 = c3.number_input(
+        "SaO₂ (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
+    hb = c4.number_input(
+        "Hb (g/dl)",
+        min_value=1.0,
+        max_value=25.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
 
     c1, c2, c3, c4 = st.columns(4)
-    lactate_known = c1.checkbox("Laktat vorhanden")
-    lactate = c1.number_input("Laktat (mmol/l)", 0.0, 30.0, 1.0, 0.1)
-    potassium_known = c2.checkbox("Kalium vorhanden")
-    potassium = c2.number_input("K⁺ (mmol/l)", 1.0, 10.0, 4.0, 0.1)
-    glucose_known = c3.checkbox("Glukose vorhanden")
-    glucose = c3.number_input("Glukose (mmol/l)", 0.0, 100.0, 5.5, 0.1)
-    urea_known = c4.checkbox("Harnstoff vorhanden")
-    urea = c4.number_input("Harnstoff (mmol/l)", 0.0, 100.0, 5.0, 0.1)
+    lactate = c1.number_input(
+        "Laktat (mmol/l)",
+        min_value=0.0,
+        max_value=30.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
+    potassium = c2.number_input(
+        "K⁺ (mmol/l)",
+        min_value=1.0,
+        max_value=10.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
+    glucose = c3.number_input(
+        "Glukose (mmol/l)",
+        min_value=0.0,
+        max_value=100.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
+    urea = c4.number_input(
+        "Harnstoff (mmol/l)",
+        min_value=0.0,
+        max_value=100.0,
+        value=None,
+        step=0.1,
+        placeholder="optional",
+    )
 
     with st.expander("Optionale Spezialdiagnostik"):
-        c1, c2 = st.columns(2)
-        osmo_known = c1.checkbox("Gemessene Osmolalität vorhanden")
-        measured_osmo = c1.number_input("Osmolalität (mosmol/kg)", 100.0, 500.0, 290.0, 1.0)
-        urine_known = c2.checkbox("Urinelektrolyte vollständig")
+        measured_osmo = st.number_input(
+            "Gemessene Osmolalität (mosmol/kg)",
+            min_value=100.0,
+            max_value=500.0,
+            value=None,
+            step=1.0,
+            placeholder="optional",
+        )
         u1, u2, u3, u4 = st.columns(4)
-        urine_na = u1.number_input("Urin-Na", 0.0, 400.0, 40.0)
-        urine_k = u2.number_input("Urin-K", 0.0, 400.0, 30.0)
-        urine_cl = u3.number_input("Urin-Cl", 0.0, 400.0, 90.0)
-        urine_ph_known = u4.checkbox("Urin-pH vorhanden")
-        urine_ph = u4.number_input("Urin-pH", 4.0, 9.0, 5.5, 0.1)
+        urine_na = u1.number_input(
+            "Urin-Na (mmol/l)",
+            min_value=0.0,
+            max_value=400.0,
+            value=None,
+            step=1.0,
+            placeholder="optional",
+        )
+        urine_k = u2.number_input(
+            "Urin-K (mmol/l)",
+            min_value=0.0,
+            max_value=400.0,
+            value=None,
+            step=1.0,
+            placeholder="optional",
+        )
+        urine_cl = u3.number_input(
+            "Urin-Cl (mmol/l)",
+            min_value=0.0,
+            max_value=400.0,
+            value=None,
+            step=1.0,
+            placeholder="optional",
+        )
+        urine_ph = u4.number_input(
+            "Urin-pH",
+            min_value=4.0,
+            max_value=9.0,
+            value=None,
+            step=0.1,
+            placeholder="optional",
+        )
 
     submitted = st.form_submit_button("BGA analysieren", type="primary", use_container_width=True)
 
@@ -76,19 +155,19 @@ if submitted:
         sample_type=sample_type, ph=ph, pco2=pco2, hco3=hco3,
         sodium=sodium, chloride=chloride,
         albumin=albumin if albumin_known else None,
-        po2=po2 if po2_known else None,
-        potassium=potassium if potassium_known else None,
-        lactate=lactate if lactate_known else None,
-        hb=hb if hb_known else None,
-        sao2_percent=sao2 if sao2_known else None,
-        fio2_percent=fio2 if fio2_known else None,
-        glucose=glucose if glucose_known else None,
-        urea=urea if urea_known else None,
-        measured_osmolality=measured_osmo if osmo_known else None,
-        urine_na=urine_na if urine_known else None,
-        urine_k=urine_k if urine_known else None,
-        urine_cl=urine_cl if urine_known else None,
-        urine_ph=urine_ph if urine_ph_known else None,
+        po2=po2,
+        potassium=potassium,
+        lactate=lactate,
+        hb=hb,
+        sao2_percent=sao2,
+        fio2_percent=fio2,
+        glucose=glucose,
+        urea=urea,
+        measured_osmolality=measured_osmo,
+        urine_na=urine_na,
+        urine_k=urine_k,
+        urine_cl=urine_cl,
+        urine_ph=urine_ph,
     )
     result = analyse_bga(data)
     if result["errors"]:
