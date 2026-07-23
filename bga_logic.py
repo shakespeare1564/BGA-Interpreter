@@ -84,17 +84,31 @@ def respiratory_alkalosis_expected_hco3(pco2: float) -> tuple[float, float]:
     return HCO3_REF - 0.2 * delta, HCO3_REF - 0.4 * delta
 
 
-def determine_processes(pco2: float, hco3: float) -> list[str]:
-    processes: list[str] = []
-    if pco2 > PCO2_HIGH:
-        processes.append("respiratorischer azidotischer Prozess")
-    elif pco2 < PCO2_LOW:
-        processes.append("respiratorischer alkalotischer Prozess")
-    if hco3 < HCO3_LOW:
-        processes.append("metabolischer azidotischer Prozess")
-    elif hco3 > HCO3_HIGH:
-        processes.append("metabolischer alkalotischer Prozess")
-    return processes or ["kein eindeutiger Prozess anhand von pCO₂ und HCO₃⁻"]
+def determine_processes(compensation: dict[str, Any]) -> list[str]:
+    """Return interpreted processes, not raw directional parameter changes.
+
+    A low HCO3- during a respiratory alkalosis can be physiological
+    compensation and must not automatically be labelled as a separate
+    metabolic acidosis.
+    """
+    mode = compensation.get("mode") or "kein eindeutiger Primärprozess"
+    processes = [mode]
+
+    for flag in compensation.get("flags", []):
+        if flag.startswith("Zusätzliche "):
+            cleaned = flag.rstrip(".")
+            cleaned = cleaned.replace(" wahrscheinlich", "")
+            cleaned = cleaned.replace(" erwägen", "")
+            processes.append(cleaned)
+
+    return list(dict.fromkeys(processes))
+
+
+def has_metabolic_acidosis(compensation: dict[str, Any]) -> bool:
+    text = " ".join(
+        [compensation.get("mode", ""), *compensation.get("flags", [])]
+    ).lower()
+    return "metabolische azidose" in text
 
 
 def compensation_assessment(ph: float, pco2: float, hco3: float) -> dict[str, Any]:
@@ -340,11 +354,13 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
     corrected_ag = albumin_corrected_ag(ag, data.albumin)
     ag_eval = corrected_ag if corrected_ag is not None else ag
 
+    compensation = compensation_assessment(data.ph, data.pco2, data.hco3)
+
     result: dict[str, Any] = {
         "errors": [],
         "ph_status": classify_ph(data.ph),
-        "processes": determine_processes(data.pco2, data.hco3),
-        "compensation": compensation_assessment(data.ph, data.pco2, data.hco3),
+        "processes": determine_processes(compensation),
+        "compensation": compensation,
         "anion_gap": ag,
         "expected_normal_ag": expected_ag,
         "corrected_anion_gap": corrected_ag,
@@ -371,8 +387,17 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
                 "HAGMA bei normalem/erhöhtem HCO₃⁻: zusätzliche metabolische Alkalose sehr wahrscheinlich; "
                 "kein Quotient mit nichtpositivem Nenner."
             )
-    elif data.hco3 < HCO3_LOW:
-        result["ag_interpretation"] = "Metabolische Azidose ohne erhöhte Anionenlücke: NAGMA erwägen."
+    elif has_metabolic_acidosis(compensation):
+        result["ag_interpretation"] = (
+            "Keine erhöhte Anionenlücke bei nachgewiesener metabolischer Azidose: "
+            "NAGMA erwägen. Eine frühe HAGMA ist klinisch nicht sicher ausgeschlossen."
+        )
+    elif data.hco3 < HCO3_LOW and compensation.get("mode") == "respiratorische Alkalose":
+        result["ag_interpretation"] = (
+            "Anionenlücke nicht erhöht. Das erniedrigte HCO₃⁻ ist mit der "
+            "Kompensation der respiratorischen Alkalose vereinbar; daraus allein "
+            "ergibt sich kein Hinweis auf eine zusätzliche NAGMA."
+        )
     else:
         result["ag_interpretation"] = "Anionenlücke nicht deutlich erhöht."
 
