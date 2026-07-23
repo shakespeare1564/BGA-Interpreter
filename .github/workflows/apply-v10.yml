@@ -1,0 +1,345 @@
+name: Apply BGA version 10
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply CO-Hb and Met-Hb patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app_path = Path('app.py')
+          logic_path = Path('bga_logic.py')
+          support_path = Path('respiratory_support.py')
+
+          app = app_path.read_text(encoding='utf-8')
+          logic = logic_path.read_text(encoding='utf-8')
+          support = support_path.read_text(encoding='utf-8')
+
+          if 'Version 10 · CO-Hb und Met-Hb' in app:
+              raise SystemExit(0)
+
+          logic = logic.replace(
+              'from typing import Any, Optional\n',
+              'from typing import Any, Optional\n\nfrom dyshemoglobin import (\n'
+              '    assess_dyshemoglobins,\n'
+              '    arterial_oxygen_content as dys_arterial_oxygen_content,\n'
+              '    fractional_oxyhemoglobin_percent,\n'
+              ')\n',
+              1,
+          )
+          logic = logic.replace(
+              '    sao2_percent: Optional[float] = None\n    fio2_percent: Optional[float] = None\n',
+              '    sao2_percent: Optional[float] = None\n'
+              '    cohb_percent: Optional[float] = None\n'
+              '    methb_percent: Optional[float] = None\n'
+              '    smoking_status: str = "unbekannt"\n'
+              '    fio2_percent: Optional[float] = None\n',
+          )
+          logic = logic.replace(
+              '    if data.sao2_percent is not None and not 0 <= data.sao2_percent <= 100:\n'
+              '        errors.append("SaO₂ muss 0–100 % betragen.")\n',
+              '    if data.sao2_percent is not None and not 0 <= data.sao2_percent <= 100:\n'
+              '        errors.append("SaO₂ muss 0–100 % betragen.")\n'
+              '    if data.cohb_percent is not None and not 0 <= data.cohb_percent <= 100:\n'
+              '        errors.append("CO-Hb muss 0–100 % betragen.")\n'
+              '    if data.methb_percent is not None and not 0 <= data.methb_percent <= 100:\n'
+              '        errors.append("Met-Hb muss 0–100 % betragen.")\n'
+              '    if ((data.cohb_percent or 0) + (data.methb_percent or 0)) >= 100:\n'
+              '        errors.append("Die Summe aus CO-Hb und Met-Hb muss unter 100 % liegen.")\n'
+              '    if data.smoking_status not in {"unbekannt", "Nichtraucher", "Raucher"}:\n'
+              '        errors.append("Ungültiger Raucherstatus.")\n',
+          )
+          logic = logic.replace(
+              '        "oxygenation_assessment": None,\n        "warnings": [],\n',
+              '        "oxygenation_assessment": None,\n'
+              '        "dyshemoglobin_assessment": None,\n'
+              '        "fractional_oxyhemoglobin_percent": None,\n'
+              '        "warnings": [],\n',
+          )
+          logic = logic.replace(
+              '    if arterial and data.po2 is not None and data.hb is not None and data.sao2_percent is not None:\n'
+              '        result["cao2"] = arterial_oxygen_content(data.hb, data.sao2_percent, data.po2)\n',
+              '    if arterial and data.po2 is not None and data.hb is not None and data.sao2_percent is not None:\n'
+              '        result["fractional_oxyhemoglobin_percent"] = fractional_oxyhemoglobin_percent(\n'
+              '            data.sao2_percent, data.cohb_percent or 0.0, data.methb_percent or 0.0\n'
+              '        )\n'
+              '        result["cao2"] = dys_arterial_oxygen_content(\n'
+              '            data.hb, data.sao2_percent, data.po2,\n'
+              '            data.cohb_percent or 0.0, data.methb_percent or 0.0,\n'
+              '        )\n',
+          )
+          logic = logic.replace(
+              '    result["oxygenation_assessment"] = assess_oxygenation(\n'
+              '        data.sample_type, data.po2, data.fio2_percent\n'
+              '    )\n',
+              '    result["oxygenation_assessment"] = assess_oxygenation(\n'
+              '        data.sample_type, data.po2, data.fio2_percent\n'
+              '    )\n'
+              '    result["dyshemoglobin_assessment"] = assess_dyshemoglobins(\n'
+              '        data.cohb_percent, data.methb_percent, data.smoking_status\n'
+              '    )\n',
+          )
+
+          support = support.replace(
+              '    if po2 is not None and fio2 is not None:\n        pf = pf_ratio(po2, fio2)\n\n    # Oxygen recommendation\n',
+              '    if po2 is not None and fio2 is not None:\n        pf = pf_ratio(po2, fio2)\n\n'
+              '    cohb = data.cohb_percent or 0.0\n'
+              '    methb = data.methb_percent or 0.0\n'
+              '    smoker = data.smoking_status.strip().lower()\n'
+              '    co_threshold = 2.0 if smoker == "nichtraucher" else 9.0\n'
+              '    definite_co_concern = cohb > co_threshold\n'
+              '    possible_co_concern = cohb > 2.0\n'
+              '    met_concern = methb > 1.5\n\n'
+              '    # Oxygen recommendation\n',
+          )
+          support = support.replace(
+              '    if not arterial:\n        oxygen = (\n'
+              '            "Keine verlässliche Sauerstoffempfehlung aus dem pO₂ einer nichtarteriellen Probe ableitbar. "\n'
+              '            "SpO₂, klinischen Zustand und bei relevanter respiratorischer Insuffizienz eine aBGA heranziehen."\n'
+              '        )\n    else:\n',
+              '    if cohb >= 25:\n'
+              '        oxygen = (\n'
+              '            f"CO-Hb {cohb:.1f}%: sofort 100% Sauerstoff über dicht sitzende Reservoirmaske beziehungsweise "\n'
+              '            "gesicherten Atemweg verabreichen. Exposition beenden, seriellen Neurostatus und CO-Hb-Verlauf "\n'
+              '            "kontrollieren; hyperbare Oxygenierung nach Klinik und toxikologischer Rücksprache prüfen."\n'
+              '        )\n'
+              '    elif definite_co_concern:\n'
+              '        oxygen = (\n'
+              '            f"CO-Hb {cohb:.1f}%: bei passender Exposition/Symptomatik 100% Sauerstoff geben und "\n'
+              '            "CO-Intoxikation toxikologisch abklären. Normale SpO₂ oder normaler pO₂ schließen eine "\n'
+              '            "funktionelle Hypoxie nicht aus."\n'
+              '        )\n'
+              '    elif methb >= 20:\n'
+              '        oxygen = (\n'
+              '            f"Met-Hb {methb:.1f}%: hochdosierten Sauerstoff geben, auslösendes Oxidans stoppen und "\n'
+              '            "dringlich toxikologisch rücksprechen; Antidottherapie nach Symptomatik, Komorbidität und "\n'
+              '            "Kontraindikationen erwägen."\n'
+              '        )\n'
+              '    elif met_concern:\n'
+              '        oxygen = (\n'
+              '            f"Met-Hb {methb:.1f}%: Sauerstoffgabe und klinische Überwachung erwägen; SpO₂ und pO₂ "\n'
+              '            "bilden den funktionellen Sauerstofftransport nur unzureichend ab."\n'
+              '        )\n'
+              '    elif possible_co_concern and smoker == "unbekannt":\n'
+              '        oxygen = (\n'
+              '            f"CO-Hb {cohb:.1f}% bei unbekanntem Raucherstatus: Raucher- und Expositionsanamnese klären. "\n'
+              '            "Bei Nichtraucherstatus, Symptomen oder plausibler Exposition 100% Sauerstoff geben."\n'
+              '        )\n'
+              '    elif not arterial:\n'
+              '        oxygen = (\n'
+              '            "Keine verlässliche Sauerstoffempfehlung aus dem pO₂ einer nichtarteriellen Probe ableitbar. "\n'
+              '            "SpO₂, klinischen Zustand und bei relevanter respiratorischer Insuffizienz eine aBGA heranziehen."\n'
+              '        )\n'
+              '    else:\n',
+          )
+          support = support.replace(
+              '    # Invasive ventilation recommendation\n',
+              '    if definite_co_concern or met_concern:\n'
+              '        niv += (\n'
+              '            " NIV ist keine spezifische Therapie der Dys-Hämoglobinämie und nur bei zusätzlichem "\n'
+              '            "ventilatorischem Versagen oder kardiorespiratorischer Indikation einzusetzen."\n'
+              '        )\n\n'
+              '    # Invasive ventilation recommendation\n',
+          )
+
+          app = app.replace(
+              'st.caption("Version 9 · Empfehlungen zu O₂, NIV und invasiver Beatmung")',
+              'st.caption("Version 10 · CO-Hb und Met-Hb mit Dys-Hämoglobin-Interpretation")',
+          )
+          old_inputs = '''    c1, c2, c3, c4 = st.columns(4)
+    po2 = c1.number_input("pO₂ (mmHg)", 10.0, 700.0, 90.0, 1.0)
+    fio2 = c2.number_input("FiO₂ (%)", 21.0, 100.0, 21.0, 1.0)
+    sao2 = c3.number_input("SaO₂ (%)", 0.0, 100.0, 97.0, 0.1)
+    hb = c4.number_input("Hb (g/dl)", 1.0, 25.0, 14.0, 0.1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    lactate = c1.number_input("Laktat (mmol/l)", 0.0, 30.0, 1.0, 0.1)
+    potassium = c2.number_input("K⁺ (mmol/l)", 1.0, 10.0, 4.0, 0.1)
+    with c3:
+        glucose_unit = st.selectbox("Glukose-Einheit", ["mmol/l", "mg/dl"])
+        glucose_text = st.text_input(
+            "Glukose",
+            value="",
+            placeholder="leer = 5,5 mmol/l bzw. 100 mg/dl",
+        )
+    urea = c4.number_input("Harnstoff (mmol/l)", 0.0, 100.0, 5.0, 0.1)
+'''
+          new_inputs = '''    c1, c2, c3, c4 = st.columns(4)
+    po2 = c1.number_input("pO₂ (mmHg)", 10.0, 700.0, 90.0, 1.0)
+    fio2 = c2.number_input("FiO₂ (%)", 21.0, 100.0, 21.0, 1.0)
+    sao2 = c3.number_input(
+        "SaO₂ funktionell (%)", 0.0, 100.0, 97.0, 0.1,
+        help="Funktionelle Sättigung O₂Hb/(O₂Hb+HHb). Bei CO-Hb/Met-Hb wird daraus die fraktionelle O₂Hb-Konzentration geschätzt."
+    )
+    hb = c4.number_input("Hb (g/dl)", 1.0, 25.0, 14.0, 0.1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    cohb = c1.number_input("CO-Hb (%)", 0.0, 100.0, 1.0, 0.1)
+    methb = c2.number_input("Met-Hb (%)", 0.0, 100.0, 0.5, 0.1)
+    smoking_status = c3.selectbox("Raucherstatus", ["unbekannt", "Nichtraucher", "Raucher"])
+    lactate = c4.number_input("Laktat (mmol/l)", 0.0, 30.0, 1.0, 0.1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    potassium = c1.number_input("K⁺ (mmol/l)", 1.0, 10.0, 4.0, 0.1)
+    with c2:
+        glucose_unit = st.selectbox("Glukose-Einheit", ["mmol/l", "mg/dl"])
+        glucose_text = st.text_input(
+            "Glukose",
+            value="",
+            placeholder="leer = 5,5 mmol/l bzw. 100 mg/dl",
+        )
+    urea = c3.number_input("Harnstoff (mmol/l)", 0.0, 100.0, 5.0, 0.1)
+    c4.info("CO-Hb und Met-Hb werden in CaO₂ und O₂-Empfehlung berücksichtigt.")
+'''
+          app = app.replace(old_inputs, new_inputs)
+          app = app.replace(
+              '        sao2_percent=sao2,\n        fio2_percent=fio2,\n',
+              '        sao2_percent=sao2,\n'
+              '        cohb_percent=cohb,\n'
+              '        methb_percent=methb,\n'
+              '        smoking_status=smoking_status,\n'
+              '        fio2_percent=fio2,\n',
+          )
+          old_oxy = '''        c_oxy1, c_oxy2 = st.columns(2)
+        c_oxy1.metric(
+            "P/F-Quotient",
+            f'{result["pf_ratio"]:.0f} mmHg' if result["pf_ratio"] is not None else "nicht berechenbar",
+        )
+        if result["cao2"] is not None:
+            c_oxy2.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
+            c_oxy2.caption("CaO₂ = 1,34 × Hb × (SaO₂/100) + 0,003 × pO₂")
+        else:
+            c_oxy2.metric("CaO₂", "nicht berechenbar")
+            c_oxy2.caption("Benötigt arterielle Probe, pO₂, Hb und SaO₂.")
+'''
+          new_oxy = '''        c_oxy1, c_oxy2, c_oxy3, c_oxy4 = st.columns(4)
+        c_oxy1.metric(
+            "P/F-Quotient",
+            f'{result["pf_ratio"]:.0f} mmHg' if result["pf_ratio"] is not None else "nicht berechenbar",
+        )
+        c_oxy2.metric("CO-Hb", f"{cohb:.1f} %")
+        c_oxy3.metric("Met-Hb", f"{methb:.1f} %")
+        if result["cao2"] is not None:
+            c_oxy4.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
+            c_oxy4.caption("CaO₂ berücksichtigt CO-Hb und Met-Hb.")
+        else:
+            c_oxy4.metric("CaO₂", "nicht berechenbar")
+            c_oxy4.caption("Benötigt arterielle Probe, pO₂, Hb und SaO₂.")
+
+        dys = result["dyshemoglobin_assessment"]
+        if dys["cohb"] is not None:
+            st.subheader("CO-Hämoglobin")
+            co_ass = dys["cohb"]
+            if co_ass["rank"] == "severe":
+                st.error(co_ass["summary"])
+            elif co_ass["rank"] in {"moderate", "mild"}:
+                st.warning(co_ass["summary"])
+            else:
+                st.success(co_ass["summary"])
+            st.info(co_ass["recommendation"])
+
+        if dys["methb"] is not None:
+            st.subheader("Methämoglobin")
+            met_ass = dys["methb"]
+            if met_ass["rank"] == "severe":
+                st.error(met_ass["summary"])
+            elif met_ass["rank"] in {"moderate", "mild"}:
+                st.warning(met_ass["summary"])
+            else:
+                st.success(met_ass["summary"])
+            st.info(met_ass["recommendation"])
+
+        if result["fractional_oxyhemoglobin_percent"] is not None:
+            st.caption(f'Geschätztes fraktionelles O₂Hb: {result["fractional_oxyhemoglobin_percent"]:.1f} %.')
+        for note in dys["notes"]:
+            st.warning(note)
+'''
+          app = app.replace(old_oxy, new_oxy)
+          app = app.replace(
+              '        st.caption(support["disclaimer"])\n\n        lines = [\n',
+              '        st.caption(support["disclaimer"])\n\n'
+              '        dys = result["dyshemoglobin_assessment"]\n'
+              '        st.subheader("Dys-Hämoglobine")\n'
+              '        if dys["cohb"] is not None:\n'
+              '            st.write(f\'**CO-Hb:** {dys["cohb"]["summary"]} {dys["cohb"]["recommendation"]}\')\n'
+              '        if dys["methb"] is not None:\n'
+              '            st.write(f\'**Met-Hb:** {dys["methb"]["summary"]} {dys["methb"]["recommendation"]}\')\n'
+              '        for note in dys["notes"]:\n'
+              '            st.warning(note)\n\n'
+              '        lines = [\n',
+          )
+          app = app.replace(
+              '        if result["corrected_anion_gap"] is not None:\n',
+              '        dys = result["dyshemoglobin_assessment"]\n'
+              '        if dys["cohb"] is not None:\n'
+              '            lines.append(f\'CO-Hb {cohb:.1f} %. {dys["cohb"]["summary"]} {dys["cohb"]["recommendation"]}\')\n'
+              '        if dys["methb"] is not None:\n'
+              '            lines.append(f\'Met-Hb {methb:.1f} %. {dys["methb"]["summary"]} {dys["methb"]["recommendation"]}\')\n'
+              '        lines.extend(dys["notes"])\n'
+              '        if result["fractional_oxyhemoglobin_percent"] is not None:\n'
+              '            lines.append(f\'Geschätztes fraktionelles O₂Hb {result["fractional_oxyhemoglobin_percent"]:.1f} %.\')\n\n'
+              '        if result["corrected_anion_gap"] is not None:\n',
+              1,
+          )
+
+          tests = Path('tests')
+          tests.mkdir(exist_ok=True)
+          (tests / 'test_dyshemoglobins.py').write_text('''import unittest
+
+from bga_logic import BGAInput, analyse_bga
+from dyshemoglobin import arterial_oxygen_content, fractional_oxyhemoglobin_percent
+from respiratory_support import respiratory_support_recommendation
+
+
+class TestDyshemoglobins(unittest.TestCase):
+    def test_case_6_fractional_oxyhb_and_cao2(self):
+        self.assertAlmostEqual(fractional_oxyhemoglobin_percent(99.3, 6.7, 0.6), 92.1, places=1)
+        self.assertAlmostEqual(arterial_oxygen_content(15.5, 99.3, 117, 6.7, 0.6), 19.5, places=1)
+
+    def test_cohb_21_non_smoker_prompts_oxygen(self):
+        data = BGAInput(sample_type="arteriell", ph=7.38, pco2=36, hco3=21,
+            sodium=140, chloride=105, po2=100, hb=14, sao2_percent=98,
+            cohb_percent=21, methb_percent=0.5, smoking_status="Nichtraucher")
+        self.assertIn("100% Sauerstoff", respiratory_support_recommendation(data)["oxygen"])
+
+    def test_methb_25_prompts_toxicology(self):
+        data = BGAInput(sample_type="arteriell", ph=7.40, pco2=40, hco3=24,
+            sodium=140, chloride=104, po2=100, hb=14, sao2_percent=90,
+            cohb_percent=1, methb_percent=25, smoking_status="Nichtraucher")
+        result = analyse_bga(data)
+        self.assertIn("klinisch relevante", result["dyshemoglobin_assessment"]["methb"]["level"])
+        self.assertIn("toxikologisch", respiratory_support_recommendation(data)["oxygen"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+''', encoding='utf-8')
+
+          logic_path.write_text(logic, encoding='utf-8')
+          support_path.write_text(support, encoding='utf-8')
+          app_path.write_text(app, encoding='utf-8')
+          PY
+      - name: Test
+        run: python -m unittest discover -s tests -v
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py bga_logic.py respiratory_support.py tests/test_dyshemoglobins.py
+          git commit -m "Add CO-Hb and Met-Hb support"
+          git push
