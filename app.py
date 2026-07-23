@@ -7,7 +7,7 @@ from bga_logic import BGAInput, analyse_bga
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
-st.caption("Version 3 · alle Zusatzfelder direkt editierbar")
+st.caption("Version 4 · mit Schweregradeinordnung der Oxygenierungsstörung")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -102,7 +102,8 @@ if submitted:
     m1.metric("pH-Einordnung", result["ph_status"])
     m2.metric("Anionenlücke", f'{result["anion_gap"]:.1f} mmol/l')
     m3.metric("Albuminkorrigierte AG", f'{result["corrected_anion_gap"]:.1f} mmol/l' if result["corrected_anion_gap"] is not None else "nicht berechenbar")
-    m4.metric("P/F-Quotient", f'{result["pf_ratio"]:.0f} mmHg' if result["pf_ratio"] is not None else "nicht berechenbar")
+    oxy = result["oxygenation_assessment"]
+    m4.metric("Oxygenierungsstörung", oxy["severity_short"] if oxy is not None else "nicht beurteilbar")
 
     tab1, tab2, tab3, tab4 = st.tabs(["Säure–Base", "Anionenlücke", "Oxygenierung", "Dokumentation"])
 
@@ -139,15 +140,32 @@ if submitted:
     with tab3:
         if sample_type != "arteriell":
             st.warning("Nichtarterielle Probe: pO₂ nicht zur arteriellen Oxygenierungsbeurteilung verwenden.")
+
+        oxy = result["oxygenation_assessment"]
+        if oxy is not None:
+            if oxy["rank"] == "severe":
+                st.error(oxy["summary"])
+            elif oxy["rank"] in {"moderate", "mild"}:
+                st.warning(oxy["summary"])
+            else:
+                st.success(oxy["summary"])
+            st.caption(f'Bewertungsgrundlage: {oxy["basis"]}')
+            for note in oxy["notes"]:
+                st.info(note)
+        elif sample_type == "arteriell":
+            st.info("Für die Schweregradeinordnung wird ein arterieller pO₂ benötigt.")
+
+        c_oxy1, c_oxy2 = st.columns(2)
+        c_oxy1.metric(
+            "P/F-Quotient",
+            f'{result["pf_ratio"]:.0f} mmHg' if result["pf_ratio"] is not None else "nicht berechenbar",
+        )
         if result["cao2"] is not None:
-            st.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
-            st.caption("CaO₂ = 1,34 × Hb × SaO₂ + 0,003 × pO₂")
+            c_oxy2.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
+            c_oxy2.caption("CaO₂ = 1,34 × Hb × SaO₂ + 0,003 × pO₂")
         else:
-            st.info("Für CaO₂ werden arterielle Probe, pO₂, Hb und SaO₂ benötigt.")
-        if result["pf_ratio"] is not None:
-            st.metric("P/F-Quotient", f'{result["pf_ratio"]:.0f} mmHg')
-        else:
-            st.info("Für P/F werden arterielle Probe, pO₂ und FiO₂ benötigt.")
+            c_oxy2.metric("CaO₂", "nicht berechenbar")
+            c_oxy2.caption("Benötigt arterielle Probe, pO₂, Hb und SaO₂.")
 
     with tab4:
         comp = result["compensation"]
@@ -163,6 +181,9 @@ if submitted:
         lines.append(result["ag_interpretation"])
         if result["delta_interpretation"]:
             lines.append(result["delta_interpretation"])
+        if result["oxygenation_assessment"] is not None:
+            lines.append(result["oxygenation_assessment"]["summary"])
+            lines.extend(result["oxygenation_assessment"]["notes"])
         if result["cao2"] is not None:
             lines.append(f'CaO₂ {result["cao2"]:.1f} ml O₂/dl.')
         if result["pf_ratio"] is not None:
