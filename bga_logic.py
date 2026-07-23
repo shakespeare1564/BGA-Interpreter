@@ -35,6 +35,7 @@ class BGAInput:
     urine_k: Optional[float] = None
     urine_cl: Optional[float] = None
     urine_ph: Optional[float] = None
+    urine_ketones: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -176,6 +177,26 @@ def delta_ratio_interpretation(value: float) -> str:
     return "Zusätzliche metabolische Alkalose oder chronische respiratorische Azidose möglich."
 
 
+def glucose_to_mmol_l(value: float, unit: str) -> float:
+    """Convert glucose to mmol/l for internal calculations."""
+    normalized = unit.strip().lower()
+    if normalized == "mmol/l":
+        return value
+    if normalized == "mg/dl":
+        return value / 18.0
+    raise ValueError("Glukose-Einheit muss mmol/l oder mg/dl sein.")
+
+
+def glucose_to_mg_dl(value_mmol_l: float) -> float:
+    return value_mmol_l * 18.0
+
+
+def format_urine_ketones(grade: int) -> str:
+    if grade == 0:
+        return "0"
+    return "+" * grade
+
+
 def calculated_osmolality(na: float, glucose: float, urea: float) -> float:
     return 2.0 * na + glucose + urea
 
@@ -304,6 +325,8 @@ def validate_input(data: BGAInput) -> list[str]:
         errors.append("SaO₂ muss 0–100 % betragen.")
     if data.fio2_percent is not None and not 21 <= data.fio2_percent <= 100:
         errors.append("FiO₂ muss 21–100 % betragen.")
+    if not 0 <= data.urine_ketones <= 4:
+        errors.append("Urin-Ketone müssen zwischen 0 und 4 Kreuzen liegen.")
     return errors
 
 
@@ -330,6 +353,7 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
         "delta_interpretation": None,
         "osmolality": None,
         "urine_anion_gap": None,
+        "urine_ketones": None,
         "cao2": None,
         "pf_ratio": None,
         "oxygenation_assessment": None,
@@ -371,6 +395,17 @@ def analyse_bga(data: BGAInput) -> dict[str, Any]:
                 "positiv: bei isolierter NAGMA verminderte renale Säureelimination/RTA erwägen"
             ),
         }
+
+    ketone_display = format_urine_ketones(data.urine_ketones)
+    result["urine_ketones"] = {
+        "grade": data.urine_ketones,
+        "display": ketone_display,
+        "interpretation": (
+            "Keine semiquantitativ nachweisbaren Urinketone."
+            if data.urine_ketones == 0
+            else "Positive Urinketone; bei passender Klinik Ketose beziehungsweise Ketoazidose prüfen."
+        ),
+    }
 
     arterial = data.sample_type.lower().startswith("arter")
     if arterial and data.po2 is not None and data.hb is not None and data.sao2_percent is not None:
