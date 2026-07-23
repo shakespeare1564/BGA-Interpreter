@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import streamlit as st
 from bga_logic import BGAInput, analyse_bga, glucose_to_mmol_l, glucose_to_mg_dl
+from respiratory_support import respiratory_support_recommendation
 
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
-st.caption("Version 8 · kompensatorisches HCO₃⁻ korrekt eingeordnet")
+st.caption("Version 9 · Empfehlungen zu O₂, NIV und invasiver Beatmung")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -78,6 +79,39 @@ with st.form("bga_form"):
             format_func=lambda grade: "0" if grade == 0 else "+" * grade,
         )
 
+    with st.expander("Klinischer Kontext für respiratorische Unterstützung"):
+        c1, c2, c3 = st.columns(3)
+        oxygen_target_profile = c1.selectbox(
+            "O₂-Zielbereich",
+            [
+                "94–98 % (kein erhöhtes Hyperkapnierisiko)",
+                "88–92 % (Risiko hyperkapnischer respiratorischer Insuffizienz)",
+            ],
+        )
+        respiratory_rate = c2.number_input(
+            "Atemfrequenz (/min)", min_value=0, max_value=80, value=16, step=1
+        )
+        respiratory_context = c3.selectbox(
+            "Klinischer Kontext",
+            [
+                "nicht spezifiziert",
+                "akute COPD-Exazerbation / OHS / neuromuskuläre oder Thoraxwanderkrankung",
+                "kardiogenes Lungenödem",
+                "andere hypoxämische respiratorische Insuffizienz",
+            ],
+        )
+        respiratory_red_flags = st.multiselect(
+            "Red Flags für unmittelbare Atemwegssicherung / NIV-Kontraindikation",
+            [
+                "Atemstillstand oder unmittelbar drohende Erschöpfung",
+                "fehlende Atemwegssicherung / deutlich eingeschränkte Schutzreflexe",
+                "schwere Bewusstseinsstörung oder fehlende Kooperation",
+                "Kreislaufinstabilität / Schock",
+                "aktives Erbrechen oder hohes Aspirationsrisiko",
+                "Gesichtstrauma oder nicht beherrschbares Maskenleck",
+            ],
+        )
+
     submitted = st.form_submit_button("BGA analysieren", type="primary", use_container_width=True)
 
 if submitted:
@@ -112,6 +146,13 @@ if submitted:
         urine_ketones=urine_ketones,
     )
     result = analyse_bga(data)
+    support = respiratory_support_recommendation(
+        data,
+        respiratory_rate=int(respiratory_rate),
+        hypercapnia_risk=oxygen_target_profile.startswith("88"),
+        clinical_context=respiratory_context,
+        red_flags=respiratory_red_flags,
+    )
     if result["errors"]:
         for error in result["errors"]:
             st.error(error)
@@ -197,6 +238,13 @@ if submitted:
 
     with tab4:
         comp = result["compensation"]
+        st.subheader("Empfehlung zur respiratorischen Unterstützung")
+        st.write(f'**Sauerstoff:** {support["oxygen"]}')
+        st.write(f'**NIV:** {support["niv"]}')
+        st.write(f'**Invasive Beatmung:** {support["invasive"]}')
+        st.info(support["reassessment"])
+        st.caption(support["disclaimer"])
+
         lines = [
             f'{result["ph_status"]} bei pH {ph:.2f}.',
             "Prozesse: " + "; ".join(result["processes"]) + ".",
@@ -204,6 +252,13 @@ if submitted:
             *comp["details"], *comp["flags"],
             f'Anionenlücke {result["anion_gap"]:.1f} mmol/l.',
         ]
+        lines.extend([
+            f'Sauerstoffempfehlung: {support["oxygen"]}',
+            f'NIV-Empfehlung: {support["niv"]}',
+            f'Empfehlung zur invasiven Beatmung: {support["invasive"]}',
+            support["reassessment"],
+            support["disclaimer"],
+        ])
         if result["corrected_anion_gap"] is not None:
             lines.append(f'Albuminkorrigierte Anionenlücke {result["corrected_anion_gap"]:.1f} mmol/l.')
         lines.append(result["ag_interpretation"])
@@ -240,6 +295,7 @@ if submitted:
                         "glucose_mg_dl": glucose_mg_dl,
                     },
                     "result": result,
+                    "respiratory_support_recommendation": support,
                 },
                 ensure_ascii=False,
                 indent=2,
