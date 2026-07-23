@@ -7,7 +7,7 @@ from bga_logic import BGAInput, analyse_bga, glucose_to_mmol_l, glucose_to_mg_dl
 st.set_page_config(page_title="Systematische BGA-Analyse", page_icon="🩸", layout="wide")
 st.title("🩸 Systematische Blutgasanalyse")
 st.caption("Rechenhilfe für Säure–Base-Status, Anionenlücke und ergänzende Oxygenierungsparameter.")
-st.caption("Version 6 · Standardwerte, Glukose-Einheiten und Urinketone")
+st.caption("Version 8 · kompensatorisches HCO₃⁻ korrekt eingeordnet")
 
 with st.expander("Wichtige Hinweise"):
     st.markdown(
@@ -129,7 +129,7 @@ if submitted:
     tab1, tab2, tab3, tab4 = st.tabs(["Säure–Base", "Anionenlücke", "Oxygenierung", "Dokumentation"])
 
     with tab1:
-        st.subheader("Erkannte Prozesse")
+        st.subheader("Interpretierte Säure–Base-Prozesse")
         for item in result["processes"]:
             st.write(f"• {item}")
         comp = result["compensation"]
@@ -190,7 +190,7 @@ if submitted:
         )
         if result["cao2"] is not None:
             c_oxy2.metric("CaO₂", f'{result["cao2"]:.1f} ml O₂/dl')
-            c_oxy2.caption("CaO₂ = 1,34 × Hb × SaO₂ + 0,003 × pO₂")
+            c_oxy2.caption("CaO₂ = 1,34 × Hb × (SaO₂/100) + 0,003 × pO₂")
         else:
             c_oxy2.metric("CaO₂", "nicht berechenbar")
             c_oxy2.caption("Benötigt arterielle Probe, pO₂, Hb und SaO₂.")
